@@ -19,6 +19,8 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
+      - name: Check out sibling crates (path deps)
+        run: git clone --depth 1 https://github.com/jamesgober/dev-report.git ../dev-report
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
@@ -38,6 +40,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Check out sibling crates (path deps)
+        run: git clone --depth 1 https://github.com/jamesgober/dev-report.git ../dev-report
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -64,6 +68,8 @@ jobs:
       RUSTDOCFLAGS: "-D warnings"
     steps:
       - uses: actions/checkout@v4
+      - name: Check out sibling crates (path deps)
+        run: git clone --depth 1 https://github.com/jamesgober/dev-report.git ../dev-report
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo doc --all-features --no-deps
@@ -73,6 +79,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Check out sibling crates (path deps)
+        run: git clone --depth 1 https://github.com/jamesgober/dev-report.git ../dev-report
       - uses: dtolnay/rust-toolchain@1.75
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --all-features --verbose
