@@ -1,0 +1,47 @@
+[package]
+name = "dev-bench"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+readme = "README.md"
+license = "Apache-2.0"
+
+authors = [
+    "James Gober <me@jamesgober.com>"
+]
+
+description = "Performance measurement and regression detection for Rust. Part of the dev-* verification suite."
+
+keywords = [
+    "benchmark",
+    "performance",
+    "regression",
+    "verification",
+    "ai-tools"
+]
+
+categories = [
+    "development-tools",
+    "development-tools::profiling",
+    "development-tools::testing"
+]
+
+documentation = "https://docs.rs/dev-bench"
+repository = "https://github.com/jamesgober/dev-bench"
+homepage = "https://github.com/jamesgober/dev-bench"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+dev-report = { version = "0.1", path = "../dev-report" }
+
+[dev-dependencies]
+
+[features]
+default = []
+
+[profile.release]
+opt-level = 3
+lto = "thin"
