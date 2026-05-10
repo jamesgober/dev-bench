@@ -33,7 +33,8 @@
 //! ## Features
 //!
 //! - `alloc-tracking` (opt-in): measures allocation count and bytes
-//!   alongside time, using `dhat`. See the [`alloc`] module.
+//!   alongside time, using `dhat`. See the `alloc` module
+//!   (visible in rustdoc when the feature is enabled).
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![warn(missing_docs)]
@@ -46,6 +47,41 @@ use dev_report::{CheckResult, Evidence, Producer, Report, Severity};
 #[cfg(feature = "alloc-tracking")]
 #[cfg_attr(docsrs, doc(cfg(feature = "alloc-tracking")))]
 pub mod alloc;
+
+/// Re-export of `dhat` for use by [`install_global_allocator!`].
+///
+/// Hidden from rustdoc; consumers should use the macro, not this path.
+#[cfg(feature = "alloc-tracking")]
+#[doc(hidden)]
+pub use ::dhat as __dhat;
+
+/// Install `dhat::Alloc` as the global allocator.
+///
+/// Available with the `alloc-tracking` feature. Invoke at module scope
+/// in your binary or test target — the macro expands to a
+/// `#[global_allocator] static` declaration that consumers cannot
+/// otherwise express without depending on `dhat` directly.
+///
+/// # Example
+///
+/// ```ignore
+/// // in main.rs or a test target's top level:
+/// dev_bench::install_global_allocator!();
+///
+/// fn main() {
+///     let _profiler = dhat::Profiler::new_heap();
+///     // ... benchmarked code ...
+/// }
+/// ```
+#[cfg(feature = "alloc-tracking")]
+#[cfg_attr(docsrs, doc(cfg(feature = "alloc-tracking")))]
+#[macro_export]
+macro_rules! install_global_allocator {
+    () => {
+        #[global_allocator]
+        static __DEV_BENCH_DHAT_ALLOC: $crate::__dhat::Alloc = $crate::__dhat::Alloc;
+    };
+}
 
 pub mod baseline;
 
@@ -254,6 +290,81 @@ impl BenchmarkResult {
             return 0.0;
         }
         self.iterations_recorded as f64 / self.total_elapsed.as_secs_f64()
+    }
+
+    /// Smallest sample. Returns `Duration::ZERO` for an empty result.
+    pub fn min(&self) -> Duration {
+        self.samples.iter().copied().min().unwrap_or(Duration::ZERO)
+    }
+
+    /// Largest sample. Returns `Duration::ZERO` for an empty result.
+    pub fn max(&self) -> Duration {
+        self.samples.iter().copied().max().unwrap_or(Duration::ZERO)
+    }
+
+    /// Sample standard deviation, in seconds. `0.0` for fewer than 2 samples.
+    ///
+    /// Uses `n-1` (Bessel's correction) for the sample variance.
+    pub fn stddev(&self) -> f64 {
+        let n = self.samples.len();
+        if n < 2 {
+            return 0.0;
+        }
+        let mean_s = self.mean.as_secs_f64();
+        let var = self
+            .samples
+            .iter()
+            .map(|d| (d.as_secs_f64() - mean_s).powi(2))
+            .sum::<f64>()
+            / (n as f64 - 1.0);
+        var.sqrt()
+    }
+
+    /// Median absolute deviation, in seconds. `0.0` for empty results.
+    ///
+    /// `MAD = median(|x_i - median(x)|)`. More robust to outliers than
+    /// standard deviation; useful for noisy measurements.
+    pub fn mad(&self) -> f64 {
+        if self.samples.is_empty() {
+            return 0.0;
+        }
+        let p50_s = self.p50.as_secs_f64();
+        let mut deviations: Vec<f64> = self
+            .samples
+            .iter()
+            .map(|d| (d.as_secs_f64() - p50_s).abs())
+            .collect();
+        deviations.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let mid = deviations.len() / 2;
+        deviations[mid]
+    }
+
+    /// 90th percentile sample duration. `Duration::ZERO` for empty results.
+    pub fn p90(&self) -> Duration {
+        self.percentile(0.90)
+    }
+
+    /// 99.9th percentile sample duration. `Duration::ZERO` for empty results.
+    ///
+    /// At least 1000 samples are required to be meaningful; with fewer
+    /// samples this returns the largest sample.
+    pub fn p999(&self) -> Duration {
+        self.percentile(0.999)
+    }
+
+    /// Compute an arbitrary percentile (0.0..=1.0). Returns `Duration::ZERO`
+    /// for empty results. Uses nearest-rank, the same as `p50`/`p99`.
+    pub fn percentile(&self, q: f64) -> Duration {
+        if self.samples.is_empty() {
+            return Duration::ZERO;
+        }
+        let q = q.clamp(0.0, 1.0);
+        let mut sorted = self.samples.clone();
+        sorted.sort();
+        let n = sorted.len();
+        let idx = ((n as f64) * q).floor() as usize;
+        let idx = idx.min(n - 1);
+        sorted[idx]
     }
 
     /// Compare this result against a baseline using a default-tuned
@@ -748,6 +859,48 @@ mod tests {
         let baseline = r.mean / 10;
         let v = r.compare_against_baseline(Some(baseline), Threshold::throughput_drop_pct(50.0));
         assert_eq!(v.verdict, Verdict::Fail);
+    }
+
+    #[test]
+    fn extra_stats_are_consistent() {
+        let mut b = Benchmark::new("uniform");
+        for _ in 0..20 {
+            b.iter(|| std::hint::black_box(1 + 1));
+        }
+        let r = b.finish();
+        // Bounds.
+        assert!(r.min() <= r.mean);
+        assert!(r.mean <= r.max());
+        assert!(r.p50 <= r.p90());
+        assert!(r.p90() <= r.p99);
+        assert!(r.p99 <= r.p999());
+        // Numbers are non-negative finite.
+        assert!(r.stddev() >= 0.0);
+        assert!(r.mad() >= 0.0);
+    }
+
+    #[test]
+    fn percentile_clamps_to_bounds() {
+        let mut b = Benchmark::new("p");
+        for _ in 0..10 {
+            b.iter(|| std::hint::black_box(1));
+        }
+        let r = b.finish();
+        // q < 0.0 -> first sample; q > 1.0 -> last sample.
+        let lo = r.percentile(-0.5);
+        let hi = r.percentile(1.5);
+        assert!(lo <= hi);
+    }
+
+    #[test]
+    fn empty_result_stats_are_zero() {
+        let r = Benchmark::new("empty").finish();
+        assert_eq!(r.min(), Duration::ZERO);
+        assert_eq!(r.max(), Duration::ZERO);
+        assert_eq!(r.p90(), Duration::ZERO);
+        assert_eq!(r.p999(), Duration::ZERO);
+        assert_eq!(r.stddev(), 0.0);
+        assert_eq!(r.mad(), 0.0);
     }
 
     #[test]

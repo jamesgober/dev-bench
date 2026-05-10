@@ -15,12 +15,11 @@
 //!
 //! ## Setup
 //!
-//! At the top of your binary or test target:
+//! Use the [`install_global_allocator!`](crate::install_global_allocator)
+//! macro at module scope in your binary or test target:
 //!
 //! ```ignore
-//! #[cfg(feature = "alloc-tracking")]
-//! #[global_allocator]
-//! static ALLOC: dhat::Alloc = dhat::Alloc;
+//! dev_bench::install_global_allocator!();
 //! ```
 //!
 //! Then start a profiler before the benchmark and snapshot stats after:
@@ -29,6 +28,13 @@
 //! let _profiler = dhat::Profiler::new_heap();
 //! // ... run benchmarked code ...
 //! let stats = dev_bench::alloc::AllocationStats::snapshot();
+//! ```
+//!
+//! The macro expands to:
+//!
+//! ```ignore
+//! #[global_allocator]
+//! static ALLOC: dhat::Alloc = dhat::Alloc;
 //! ```
 
 use dev_report::{CheckResult, Evidence, Severity};

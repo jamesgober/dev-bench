@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-05-09
+
+### Added
+
+- `BenchmarkResult` extra statistics: `min()`, `max()`, `stddev()` (sample, Bessel's correction), `mad()` (median absolute deviation), `p90()`, `p999()`, and a generic `percentile(q)` accessor.
+- `install_global_allocator!()` macro (gated by `alloc-tracking`) that expands to the `#[global_allocator] static ALLOC: dhat::Alloc = dhat::Alloc;` declaration users would otherwise have to write themselves. Also re-exports `dhat` privately as `__dhat` for the macro to reference.
+
+### Fixed
+
+- Broken intra-doc link `[`alloc`]` in the crate-level docstring would warn under `cargo doc` when the `alloc-tracking` feature is disabled. The link is now a plain code span.
+
+[0.9.1]: https://github.com/jamesgober/dev-bench/releases/tag/v0.9.1
+
 ## [0.9.0] - 2026-05-08
 
 ### Added
@@ -76,5 +89,5 @@ This is a name-claim release. Public API will expand significantly
 in `0.2.x` and `0.3.x` for throughput, allocation tracking, and
 baseline storage.
 
-[Unreleased]: https://github.com/jamesgober/dev-bench/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/jamesgober/dev-bench/compare/v0.9.1...HEAD
 [0.1.0]: https://github.com/jamesgober/dev-bench/releases/tag/v0.1.0
