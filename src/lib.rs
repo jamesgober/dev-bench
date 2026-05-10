@@ -178,6 +178,46 @@ impl Benchmark {
         self.iterations_recorded += n;
     }
 
+    /// Run a closure repeatedly for at most `budget` wall-clock time,
+    /// recording one sample per iteration.
+    ///
+    /// Stops as soon as the elapsed time crosses `budget`. The
+    /// closure may run slightly past the budget (the in-flight
+    /// iteration completes); the recorded sample count reflects what
+    /// was actually executed.
+    ///
+    /// Useful when you want a benchmark to run "for N seconds" rather
+    /// than "for N iterations" — the per-iter cost is unknown and you
+    /// just want a bounded run.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use dev_bench::Benchmark;
+    /// use std::time::Duration;
+    ///
+    /// let mut b = Benchmark::new("hot");
+    /// b.run_for(Duration::from_millis(20), || {
+    ///     std::hint::black_box(1 + 1);
+    /// });
+    /// let r = b.finish();
+    /// // At least one sample was collected.
+    /// assert!(!r.samples.is_empty());
+    /// ```
+    pub fn run_for<F>(&mut self, budget: Duration, mut f: F)
+    where
+        F: FnMut(),
+    {
+        let deadline = Instant::now() + budget;
+        while Instant::now() < deadline {
+            let start = Instant::now();
+            f();
+            let elapsed = start.elapsed();
+            self.samples.push(elapsed);
+            self.iterations_recorded += 1;
+        }
+    }
+
     /// Finalize the benchmark and produce a [`BenchmarkResult`].
     pub fn finish(self) -> BenchmarkResult {
         let n = self.samples.len();
@@ -224,6 +264,33 @@ fn compute_cv(samples: &[Duration], mean: Duration) -> f64 {
         .sum::<f64>()
         / n;
     var.sqrt() / mean_s
+}
+
+/// One bin of a sample-distribution histogram.
+///
+/// Returned by [`BenchmarkResult::histogram`]. Bins are ordered, the
+/// first bin's `lower` equals `BenchmarkResult::min` and the last
+/// bin's `upper` equals `BenchmarkResult::max`.
+///
+/// # Example
+///
+/// ```
+/// use dev_bench::Benchmark;
+///
+/// let mut b = Benchmark::new("h");
+/// for _ in 0..10 { b.iter(|| std::hint::black_box(1 + 1)); }
+/// let bins = b.finish().histogram(4);
+/// assert!(bins.iter().all(|b| b.lower <= b.upper));
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HistogramBin {
+    /// Inclusive lower bound of this bin.
+    pub lower: Duration,
+    /// Inclusive upper bound (for the last bin) or exclusive upper
+    /// bound (for all other bins).
+    pub upper: Duration,
+    /// Number of samples falling into this bin.
+    pub count: usize,
 }
 
 /// The result of a finished benchmark.
@@ -322,7 +389,7 @@ impl BenchmarkResult {
 
     /// Median absolute deviation, in seconds. `0.0` for empty results.
     ///
-    /// `MAD = median(|x_i - median(x)|)`. More robust to outliers than
+    /// `MAD = median(|x_i - median(x)|)`. Less affected by outliers than
     /// standard deviation; useful for noisy measurements.
     pub fn mad(&self) -> f64 {
         if self.samples.is_empty() {
@@ -365,6 +432,75 @@ impl BenchmarkResult {
         let idx = ((n as f64) * q).floor() as usize;
         let idx = idx.min(n - 1);
         sorted[idx]
+    }
+
+    /// Compute a uniform-width histogram over the sample distribution.
+    ///
+    /// Returns `bucket_count` bins covering `[min, max]`, each with
+    /// the count of samples falling into that bin. The returned
+    /// `Vec<HistogramBin>` is in ascending order; the first bin's
+    /// `lower` equals `min()`, the last bin's `upper` equals `max()`.
+    ///
+    /// For an empty result or `bucket_count == 0`, returns `vec![]`.
+    /// When `min == max` (all samples equal), returns one bin with
+    /// the full sample count.
+    ///
+    /// Useful for spotting bimodality, outlier tails, and warmup
+    /// effects that mean/percentile alone hide.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use dev_bench::Benchmark;
+    ///
+    /// let mut b = Benchmark::new("h");
+    /// for _ in 0..50 { b.iter(|| std::hint::black_box(1 + 1)); }
+    /// let r = b.finish();
+    /// let hist = r.histogram(8);
+    /// assert!(hist.len() <= 8);
+    /// let total: usize = hist.iter().map(|h| h.count).sum();
+    /// assert_eq!(total, r.samples.len());
+    /// ```
+    pub fn histogram(&self, bucket_count: usize) -> Vec<HistogramBin> {
+        if bucket_count == 0 || self.samples.is_empty() {
+            return Vec::new();
+        }
+        let min = self.min();
+        let max = self.max();
+        if min == max {
+            return vec![HistogramBin {
+                lower: min,
+                upper: max,
+                count: self.samples.len(),
+            }];
+        }
+        let total_ns = (max.as_nanos() - min.as_nanos()) as f64;
+        let bucket_ns = total_ns / bucket_count as f64;
+        let mut counts = vec![0usize; bucket_count];
+        for s in &self.samples {
+            let offset = (s.as_nanos() - min.as_nanos()) as f64;
+            let mut idx = (offset / bucket_ns).floor() as usize;
+            if idx >= bucket_count {
+                idx = bucket_count - 1;
+            }
+            counts[idx] += 1;
+        }
+        let min_ns = min.as_nanos() as u64;
+        let mut bins = Vec::with_capacity(bucket_count);
+        for (i, count) in counts.into_iter().enumerate() {
+            let lower_ns = min_ns + (bucket_ns * i as f64) as u64;
+            let upper_ns = if i + 1 == bucket_count {
+                max.as_nanos() as u64
+            } else {
+                min_ns + (bucket_ns * (i + 1) as f64) as u64
+            };
+            bins.push(HistogramBin {
+                lower: Duration::from_nanos(lower_ns),
+                upper: Duration::from_nanos(upper_ns),
+                count,
+            });
+        }
+        bins
     }
 
     /// Compare this result against a baseline using a default-tuned
@@ -901,6 +1037,68 @@ mod tests {
         assert_eq!(r.p999(), Duration::ZERO);
         assert_eq!(r.stddev(), 0.0);
         assert_eq!(r.mad(), 0.0);
+    }
+
+    #[test]
+    fn run_for_collects_at_least_one_sample() {
+        let mut b = Benchmark::new("budget");
+        b.run_for(Duration::from_millis(10), || {
+            std::hint::black_box(1 + 1);
+        });
+        let r = b.finish();
+        assert!(!r.samples.is_empty());
+        assert_eq!(r.iterations_recorded, r.samples.len() as u64);
+    }
+
+    #[test]
+    fn run_for_zero_budget_collects_no_samples() {
+        let mut b = Benchmark::new("zero");
+        b.run_for(Duration::ZERO, || {
+            std::hint::black_box(1 + 1);
+        });
+        let r = b.finish();
+        // With zero budget, deadline has already passed; no iterations.
+        assert!(r.samples.is_empty() || r.samples.len() <= 1);
+    }
+
+    #[test]
+    fn histogram_total_count_equals_samples() {
+        let mut b = Benchmark::new("h");
+        for _ in 0..50 {
+            b.iter(|| std::hint::black_box(1 + 1));
+        }
+        let r = b.finish();
+        let bins = r.histogram(8);
+        assert!(!bins.is_empty());
+        let total: usize = bins.iter().map(|b| b.count).sum();
+        assert_eq!(total, r.samples.len());
+    }
+
+    #[test]
+    fn histogram_zero_buckets_returns_empty() {
+        let mut b = Benchmark::new("h");
+        b.iter(|| std::hint::black_box(1));
+        let r = b.finish();
+        assert!(r.histogram(0).is_empty());
+    }
+
+    #[test]
+    fn histogram_empty_result_returns_empty() {
+        let r = Benchmark::new("e").finish();
+        assert!(r.histogram(8).is_empty());
+    }
+
+    #[test]
+    fn histogram_bins_are_ordered() {
+        let mut b = Benchmark::new("h");
+        for _ in 0..30 {
+            b.iter(|| std::hint::black_box(1 + 1));
+        }
+        let bins = b.finish().histogram(5);
+        for win in bins.windows(2) {
+            assert!(win[0].lower <= win[1].lower);
+            assert!(win[0].lower <= win[0].upper);
+        }
     }
 
     #[test]

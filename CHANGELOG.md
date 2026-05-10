@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-05-10
+
+### Added
+
+- `Benchmark::run_for(budget, closure)` — wall-clock-bounded benchmark mode. Runs the closure repeatedly until `budget` elapses, recording one sample per iteration. Pairs naturally with iteration-based `iter` for benchmarks where you want "for N seconds" semantics.
+- `BenchmarkResult::histogram(bucket_count)` returning a `Vec<HistogramBin>` with uniform-width bins covering `[min, max]`. Surfaces bimodality, outlier tails, and warmup effects that mean/percentile alone hide.
+- New `HistogramBin { lower, upper, count }` type.
+
+[0.9.2]: https://github.com/jamesgober/dev-bench/releases/tag/v0.9.2
+
 ## [0.9.1] - 2026-05-09
 
 ### Added
@@ -89,5 +99,5 @@ This is a name-claim release. Public API will expand significantly
 in `0.2.x` and `0.3.x` for throughput, allocation tracking, and
 baseline storage.
 
-[Unreleased]: https://github.com/jamesgober/dev-bench/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/jamesgober/dev-bench/compare/v0.9.2...HEAD
 [0.1.0]: https://github.com/jamesgober/dev-bench/releases/tag/v0.1.0

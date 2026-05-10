@@ -30,7 +30,7 @@ For interactive profiling, use `criterion` or `divan`.
 
 ```toml
 [dependencies]
-dev-bench = "0.9.1"
+dev-bench = "0.9.2"
 ```
 
 ```rust
@@ -140,7 +140,7 @@ let report = producer.produce();   // dev_report::Report
 
 ```toml
 [dependencies]
-dev-bench = { version = "0.9.1", features = ["alloc-tracking"] }
+dev-bench = { version = "0.9.2", features = ["alloc-tracking"] }
 ```
 
 ```rust,ignore
