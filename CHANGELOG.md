@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-05-12
+
 ### Added
 
 - `examples/basic_benchmark.rs` — minimal runnable demonstration of the `Benchmark::new` → `iter` → `finish` flow, printing the headline statistics (`mean`, `p50`, `p99`, `ops_per_sec`, `cv`).
@@ -14,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - CI: `actions/checkout` bumped from `v4` to `v5` (removes Node 20 deprecation warnings).
+
+[0.9.3]: https://github.com/jamesgober/dev-bench/releases/tag/v0.9.3
 
 ## [0.9.2] - 2026-05-10
 
@@ -107,5 +111,5 @@ This is a name-claim release. Public API will expand significantly
 in `0.2.x` and `0.3.x` for throughput, allocation tracking, and
 baseline storage.
 
-[Unreleased]: https://github.com/jamesgober/dev-bench/compare/v0.9.2...HEAD
+[Unreleased]: https://github.com/jamesgober/dev-bench/compare/v0.9.3...HEAD
 [0.1.0]: https://github.com/jamesgober/dev-bench/releases/tag/v0.1.0
