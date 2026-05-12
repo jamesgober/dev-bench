@@ -42,3 +42,6 @@ Homestead.json
 *.sublime-workspace
 *.sublime-project
 ._*
+# Library crate — lockfile is regenerated per consumer build,
+# not part of the published API. Tracked only on the bin-shipping dev-ci.
+Cargo.lock
