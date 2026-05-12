@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `examples/basic_benchmark.rs` — minimal runnable demonstration of the `Benchmark::new` → `iter` → `finish` flow, printing the headline statistics (`mean`, `p50`, `p99`, `ops_per_sec`, `cv`).
+
+### Changed
+
+- CI: `actions/checkout` bumped from `v4` to `v5` (removes Node 20 deprecation warnings).
+
 ## [0.9.2] - 2026-05-10
 
 ### Added
