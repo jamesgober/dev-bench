@@ -1,6 +1,6 @@
 [package]
 name = "dev-bench"
-version = "0.9.3"
+version = "0.9.4"
 edition = "2021"
 rust-version = "1.85"
 readme = "README.md"
@@ -10,14 +10,14 @@ authors = [
     "James Gober <me@jamesgober.com>"
 ]
 
-description = "Performance measurement and regression detection for Rust. Part of the dev-* verification suite."
+description = "Benchmark and regression detection for Rust. Percentile stats, baseline storage, threshold gating, structured CI-gateable verdicts. Part of the dev-* verification collection."
 
 keywords = [
     "benchmark",
     "performance",
     "regression",
-    "verification",
-    "ai-tools"
+    "profiling",
+    "ci"
 ]
 
 categories = [

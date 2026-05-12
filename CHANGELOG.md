@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-05-12
+
+Documentation and SEO pass. No code changes.
+
+### Changed
+
+- README header standardized to match the collection-wide template: Rust logo image, MSRV badge between CI and docs.rs, copyright block at bottom.
+- Subtitle now reads `BENCHMARK & REGRESSION DETECTION FOR RUST` (was `PERFORMANCE MEASUREMENT FOR RUST`). More specific and search-tighter.
+- Tagline rewritten to lead with the developer outcome (measure, baseline, catch regressions before they ship) instead of the part-of-suite framing.
+- `## What it does` no longer leads with the AI-agent framing; the positioning vs. `criterion`/`divan` is more direct.
+- `## The dev-* suite` retitled to `The dev-* collection` with the full 14-crate map.
+- `Cargo.toml` description rewritten: lists actual feature surface (percentile stats, baselines, threshold gating, CI-gateable verdicts).
+- `Cargo.toml` keywords retuned: dropped `verification` and `ai-tools`, added `profiling` and `ci` for crates.io search.
+
+### Added
+
+- "Part of the `dev-*` verification collection" block on the README, under the intro, linking the umbrella `dev-tools` crate.
+
+[0.9.4]: https://github.com/jamesgober/dev-bench/releases/tag/v0.9.4
+
 ## [0.9.3] - 2026-05-12
 
 ### Added
