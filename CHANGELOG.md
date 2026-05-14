@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.6] - 2026-05-12
+
+Skip-release to clean up a premature `v0.9.5` GH tag that never reached crates.io. The compiled artifact is the v0.9.4 source plus the `Cargo.lock`-untrack repository-hygiene commit; the version label moves to `0.9.6` so the published version sequence on crates.io stays monotonic after the orphan tag is deleted. No code or behavior change from v0.9.4.
+
+### Changed
+
+- Stopped tracking `Cargo.lock`. Library crates conventionally do not commit lock files — the lock is a snapshot of one resolution and downstream consumers ignore it anyway. Tracking it was generating spurious dirty-tree noise every time a path-dep sibling bumped version. `Cargo.lock` is now in `.gitignore`; `git rm --cached Cargo.lock` retired the tracked copy.
+
+### Notes
+
+- The compiled crate is byte-equivalent to v0.9.4 plus the lock-file untracking.
+- v0.9.5 never existed on crates.io. A premature `v0.9.5` GitHub tag/release was created without bumping `Cargo.toml` first; that tag has been deleted as part of this release.
+- No new dependencies, no MSRV change.
+
+[0.9.6]: https://github.com/jamesgober/dev-bench/releases/tag/v0.9.6
+
 ## [0.9.4] - 2026-05-12
 
 Documentation and SEO pass. No code changes.
