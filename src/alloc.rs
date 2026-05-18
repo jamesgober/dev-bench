@@ -1,17 +1,24 @@
 //! Allocation tracking. Available with the `alloc-tracking` feature.
 //!
-//! Wraps `dhat` to capture total bytes, total allocation count, and
-//! peak resident bytes during a benchmark. Reports a [`CheckResult`]
-//! with regression-style verdict.
+//! Wraps `mod-alloc`'s `dhat_compat` surface (a drop-in replacement
+//! for `dhat-rs`) to capture total bytes, total allocation count,
+//! and peak resident bytes during a benchmark. Reports a
+//! [`CheckResult`] with regression-style verdict.
+//!
+//! As of v0.9.7 the backend is `mod-alloc` instead of `dhat`; the
+//! public API surface here (`AllocationStats`, the
+//! `install_global_allocator!` macro) is unchanged. JSON output
+//! from `mod-alloc::dhat_compat::Profiler` loads in the same
+//! upstream `dh_view.html` viewer.
 //!
 //! ## Cost
 //!
-//! Enabling `alloc-tracking` installs `dhat::Alloc` as the global
-//! allocator. This is heavier than the default allocator and
-//! materially changes timing characteristics. **Do not combine
-//! allocation thresholds with timing thresholds in the same
-//! invocation.** Run timing benchmarks with the feature off and
-//! allocation benchmarks with it on.
+//! Enabling `alloc-tracking` installs a tracking global allocator.
+//! It is heavier than the default allocator and changes timing
+//! characteristics. **Do not combine allocation thresholds with
+//! timing thresholds in the same invocation.** Run timing
+//! benchmarks with the feature off and allocation benchmarks with
+//! it on.
 //!
 //! ## Setup
 //!
@@ -25,24 +32,24 @@
 //! Then start a profiler before the benchmark and snapshot stats after:
 //!
 //! ```ignore
+//! use mod_alloc::dhat_compat as dhat;
+//!
 //! let _profiler = dhat::Profiler::new_heap();
 //! // ... run benchmarked code ...
 //! let stats = dev_bench::alloc::AllocationStats::snapshot();
 //! ```
 //!
-//! The macro expands to:
-//!
-//! ```ignore
-//! #[global_allocator]
-//! static ALLOC: dhat::Alloc = dhat::Alloc;
-//! ```
+//! The macro expands to a `#[global_allocator] static` of
+//! `mod_alloc::dhat_compat::Alloc`.
 
 use dev_report::{CheckResult, Evidence, Severity};
 
-/// Snapshot of allocation activity, captured from `dhat::HeapStats`.
+/// Snapshot of allocation activity, captured from
+/// `mod_alloc::dhat_compat::HeapStats` (drop-in for
+/// `dhat::HeapStats`).
 ///
-/// Build via [`AllocationStats::snapshot`] inside a `dhat::Profiler`
-/// scope.
+/// Build via [`AllocationStats::snapshot`] inside a
+/// `mod_alloc::dhat_compat::Profiler` scope.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AllocationStats {
     /// Total bytes allocated across the profiled scope (cumulative).
@@ -56,12 +63,16 @@ pub struct AllocationStats {
 }
 
 impl AllocationStats {
-    /// Capture the current `dhat::HeapStats` into an `AllocationStats`.
+    /// Capture the current `HeapStats` into an `AllocationStats`.
     ///
-    /// MUST be called inside an active `dhat::Profiler::new_heap()`
-    /// scope. Outside that scope, `dhat` panics.
+    /// SHOULD be called inside an active
+    /// `mod_alloc::dhat_compat::Profiler::new_heap()` scope so the
+    /// profiler's drop-time JSON write captures the same data. The
+    /// snapshot itself works outside a Profiler scope (returns
+    /// zeros if no global allocator is installed); the historical
+    /// `dhat-rs` panic is no longer present.
     pub fn snapshot() -> Self {
-        let s = dhat::HeapStats::get();
+        let s = mod_alloc::dhat_compat::HeapStats::get();
         Self {
             total_bytes: s.total_bytes,
             total_blocks: s.total_blocks,

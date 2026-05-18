@@ -7,6 +7,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.7] - 2026-05-18
+
+### Changed
+
+- **`alloc-tracking` backend swapped from `dhat = "0.3"` to
+  `mod-alloc`'s `dhat_compat` surface.** The public API
+  (`AllocationStats`, `AllocationStats::snapshot()`, the
+  `install_global_allocator!()` macro) is unchanged; downstream
+  callers that use this crate's macro need no edits. Callers that
+  reach for `dhat::Profiler` or `dhat::HeapStats` directly should
+  switch to `use mod_alloc::dhat_compat as dhat;` — the surface is
+  method-for-method compatible (see `MIGRATING_FROM_DHAT.md` in
+  the mod-alloc repo for the full mapping).
+- **`install_global_allocator!` now installs
+  `mod_alloc::dhat_compat::Alloc`.** Same `#[global_allocator] static`
+  shape; same DHAT-viewer-compatible JSON output on `Profiler`
+  drop.
+- **`AllocationStats::snapshot()` no longer panics outside a
+  Profiler scope.** `dhat-rs`'s historical panic on `HeapStats::get()`
+  without a live Profiler is gone; the snapshot returns zeros if
+  no global allocator is installed.
+
+### Removed
+
+- **`dhat` dependency dropped.** The transitive
+  `dhat -> backtrace -> addr2line` chain (which forced Rust 1.85+
+  through `addr2line 0.25.1`) is no longer pulled in by
+  `alloc-tracking`.
+
+### Added
+
+- `mod-alloc = { version = "0.9", features = ["dhat-compat"], optional = true }`
+  as the new `alloc-tracking` backend. MSRV 1.75, pure-Rust, no
+  FFI, zero runtime deps on the alloc hot path.
+
+### MSRV
+
+- Held at `1.85`. The dhat-side blocker is gone, but the
+  `dev-report` sibling still requires 1.85; dropping dev-bench's
+  MSRV to 1.75 waits on a future `dev-report` milestone.
+
+### Migration
+
+No action required for callers that use this crate's
+`install_global_allocator!()` macro. Callers that referenced the
+`dhat` crate directly in their own code (separate from this
+crate's macro expansion) should swap their imports:
+
+```rust
+// Before
+use dhat;
+
+// After
+use mod_alloc::dhat_compat as dhat;
+```
+
+Cargo.toml swap is automatic when you bump `dev-bench` to 0.9.7 —
+the `alloc-tracking` feature now resolves to `mod-alloc` instead
+of `dhat`.
+
+### Notes
+
+- JSON output from the new backend's `Profiler` loads in the same
+  upstream `dh_view.html` viewer (shipped with Valgrind).
+- `dev-bench` does not consume per-call-site backtrace reports;
+  it only reads `HeapStats` counters. The mod-alloc walker's
+  shallow-trace gap on stock-std release builds (Windows) does
+  not affect `alloc-tracking` output.
+
+[0.9.7]: https://github.com/jamesgober/dev-bench/releases/tag/v0.9.7
+
 ## [0.9.6] - 2026-05-12
 
 Skip-release to clean up a premature `v0.9.5` GH tag that never reached crates.io. The compiled artifact is the v0.9.4 source plus the `Cargo.lock`-untrack repository-hygiene commit; the version label moves to `0.9.6` so the published version sequence on crates.io stays monotonic after the orphan tag is deleted. No code or behavior change from v0.9.4.

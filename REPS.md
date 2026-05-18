@@ -114,13 +114,17 @@ Allocation tracking is opt-in via the `alloc-tracking` feature flag.
 When enabled:
 
 - The crate exposes `dev_bench::alloc::AllocationStats`.
-- `dhat` is added as a dependency.
-- The caller is responsible for installing `dhat::Alloc` as the
-  global allocator and instantiating `dhat::Profiler` around the
+- `mod-alloc` is added as a dependency (with the `dhat-compat`
+  feature). v0.9.7 swapped the backend from `dhat = "0.3"` to
+  `mod-alloc`'s `dhat_compat` surface. The public API is unchanged.
+- The caller is responsible for installing
+  `mod_alloc::dhat_compat::Alloc` as the global allocator (via
+  `dev_bench::install_global_allocator!()` or directly) and
+  instantiating `mod_alloc::dhat_compat::Profiler` around the
   measured scope.
 - Allocation stats MUST NOT be combined with timing thresholds in a
-  single comparison invocation; the dhat allocator changes timing
-  characteristics enough to invalidate the comparison.
+  single comparison invocation; the tracking allocator changes
+  timing characteristics enough to invalidate the comparison.
 
 ## 8. Producer integration
 

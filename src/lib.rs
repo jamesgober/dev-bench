@@ -33,8 +33,9 @@
 //! ## Features
 //!
 //! - `alloc-tracking` (opt-in): measures allocation count and bytes
-//!   alongside time, using `dhat`. See the `alloc` module
-//!   (visible in rustdoc when the feature is enabled).
+//!   alongside time, using `mod-alloc`'s `dhat_compat` surface
+//!   (drop-in for `dhat-rs`). See the `alloc` module (visible
+//!   in rustdoc when the feature is enabled).
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![warn(missing_docs)]
@@ -48,25 +49,40 @@ use dev_report::{CheckResult, Evidence, Producer, Report, Severity};
 #[cfg_attr(docsrs, doc(cfg(feature = "alloc-tracking")))]
 pub mod alloc;
 
-/// Re-export of `dhat` for use by [`install_global_allocator!`].
+/// Re-export of `mod-alloc`'s `dhat_compat` surface for use by
+/// [`install_global_allocator!`].
+///
+/// Kept under the historical `__dhat` name so the macro expansion
+/// stays compatible across the v0.9.6 → v0.9.7 backend swap. The
+/// `dhat_compat::Alloc` / `Profiler` / `HeapStats` shapes mirror
+/// `dhat-rs`'s public surface field-for-field; users following
+/// dhat-rs's documentation pattern in their own code continue to
+/// work via `use mod_alloc::dhat_compat as dhat;`.
 ///
 /// Hidden from rustdoc; consumers should use the macro, not this path.
 #[cfg(feature = "alloc-tracking")]
 #[doc(hidden)]
-pub use ::dhat as __dhat;
+pub use ::mod_alloc::dhat_compat as __dhat;
 
-/// Install `dhat::Alloc` as the global allocator.
+/// Install the allocation-tracking global allocator.
 ///
-/// Available with the `alloc-tracking` feature. Invoke at module scope
-/// in your binary or test target — the macro expands to a
+/// Available with the `alloc-tracking` feature. Invoke at module
+/// scope in your binary or test target — the macro expands to a
 /// `#[global_allocator] static` declaration that consumers cannot
-/// otherwise express without depending on `dhat` directly.
+/// otherwise express without depending on `mod-alloc` directly.
+///
+/// The backend is `mod-alloc`'s `dhat_compat::Alloc` (drop-in for
+/// `dhat-rs`'s `dhat::Alloc`); behaviour, API surface, and JSON
+/// output remain DHAT-viewer-compatible.
 ///
 /// # Example
 ///
 /// ```ignore
 /// // in main.rs or a test target's top level:
 /// dev_bench::install_global_allocator!();
+///
+/// // Optionally pull the same compat surface into your own code:
+/// use mod_alloc::dhat_compat as dhat;
 ///
 /// fn main() {
 ///     let _profiler = dhat::Profiler::new_heap();

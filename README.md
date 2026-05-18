@@ -153,10 +153,15 @@ let report = producer.produce();   // dev_report::Report
 
 ```toml
 [dependencies]
-dev-bench = { version = "0.9.4", features = ["alloc-tracking"] }
+dev-bench = { version = "0.9", features = ["alloc-tracking"] }
 ```
 
 ```rust,ignore
+use mod_alloc::dhat_compat as dhat;
+
+// Or use the convenience macro that expands to a
+// `#[global_allocator] static` of the same type:
+// dev_bench::install_global_allocator!();
 #[global_allocator]
 static ALLOC: dhat::Alloc = dhat::Alloc;
 
@@ -166,7 +171,11 @@ let stats = dev_bench::alloc::AllocationStats::snapshot();
 let check = stats.compare_against_baseline("parse", baseline_alloc, 10.0);
 ```
 
-The dhat allocator changes timing characteristics, so do **not**
+As of v0.9.7 the backend is `mod-alloc`'s `dhat_compat` surface
+(drop-in for `dhat-rs`). The JSON output written by `Profiler`'s
+drop loads in the same upstream `dh_view.html` viewer.
+
+The tracking allocator changes timing characteristics, so do **not**
 combine timing thresholds with allocation thresholds in the same
 invocation.
 
@@ -211,9 +220,11 @@ change.
 ## Minimum supported Rust version
 
 `1.85` — pinned in `Cargo.toml` via `rust-version` and verified by
-the MSRV job in CI. (Bumped from 1.75 because the `alloc-tracking`
-feature pulls `dhat` → `addr2line`, which requires Rust 1.81+, and
-sibling crates require `edition2024` (1.85+).)
+the MSRV job in CI. The `alloc-tracking` backend's MSRV blocker
+(`dhat → addr2line` requiring 1.85+) was lifted in v0.9.7 by
+swapping to `mod-alloc` (MSRV 1.75). dev-bench's 1.85 floor is
+now held only by the `dev-report` sibling, which is tracked for
+a separate MSRV-drop milestone in that crate.
 
 ## License
 
