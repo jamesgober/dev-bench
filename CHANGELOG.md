@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.8] - 2026-05-18
+
+### Changed
+
+- **`mod-alloc` dep bumped from `^0.9` to `^1`.** `mod-alloc 1.0.0` is the stable release of the `dhat_compat` backend that v0.9.7 swapped to. The shape and behavior of `dev-bench`'s `alloc-tracking` feature are unchanged; this bump just tracks the upstream's pre-1.0 → 1.0 promotion. Cargo.toml: `mod-alloc = { version = "1", path = "../mod-alloc", features = ["dhat-compat"], optional = true }`.
+
+### Notes
+
+- No code changes in `dev-bench` itself; only the version constraint on the optional `mod-alloc` dep.
+- MSRV held at `1.85` for now. `mod-alloc 1.0` and `dev-bench` source both compile cleanly on Rust 1.75 (verified), but the coordinated suite-wide MSRV rollback is gated on `dev-fixtures` clearing its `tempfile → getrandom 0.4.2 → edition2024` dependency chain, which requires the in-progress `mod-tempdir` swap to land first.
+
+[0.9.8]: https://github.com/jamesgober/dev-bench/releases/tag/v0.9.8
+
 ## [0.9.7] - 2026-05-18
 
 ### Changed
