@@ -13,7 +13,10 @@
 //!
 //! Enabling `alloc-tracking` installs a tracking global allocator.
 //! It is heavier than the default allocator and changes timing
-//! characteristics. **Do not combine allocation thresholds with
+//! characteristics. With `mod-alloc` 1.0.1 or later it only updates
+//! counters: call sites are recorded only while a
+//! `mod_alloc::dhat_compat::Profiler` is alive, and dev-bench never
+//! creates one, so no time goes into walking stack frames. **Do not combine allocation thresholds with
 //! timing thresholds in the same invocation.** Run timing
 //! benchmarks with the feature off and allocation benchmarks with
 //! it on.
@@ -43,8 +46,8 @@
 //! ```
 //!
 //! No `Profiler` is needed for the counters. `mod_alloc::dhat_compat::Profiler`
-//! only writes a DHAT JSON file when dropped; it does not reset or scope
-//! the counters. If you want that file, add `mod-alloc` with the
+//! turns on call-site recording while it is alive and writes a DHAT JSON
+//! file when dropped; it does not reset or scope the counters. If you want that file, add `mod-alloc` with the
 //! `dhat-compat` feature at the same major version `dev-bench` uses
 //! (currently `1`), otherwise your `Profiler` belongs to a different copy
 //! of `mod-alloc` than the installed allocator and records nothing.

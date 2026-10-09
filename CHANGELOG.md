@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-10-09
+
+Cheaper allocation tracking.
+
+### Changed
+
+- `alloc-tracking` now requires `mod-alloc` 1.0.1. The allocator that
+  `install_global_allocator!()` installs used to walk stack frames and
+  record a call site on every allocation, data dev-bench never read.
+  `mod-alloc` 1.0.1 records call sites only while a
+  `dhat_compat::Profiler` is alive, and dev-bench never creates one, so
+  tracking now only updates counters. Measured in `mod-alloc`: a 64-byte
+  alloc + free went from about 59.5 ns to 50.5 ns. Allocation counts and
+  byte totals are unchanged.
+
+### Documentation
+
+- The `alloc` module docs describe the tracking cost and what a
+  `Profiler` adds.
+
+[0.10.1]: https://github.com/jamesgober/dev-bench/releases/tag/v0.10.1
+
 ## [0.10.0] - 2026-10-09
 
 `mod-alloc` 1.0, MSRV 1.75, and statistics and baseline-store fixes
