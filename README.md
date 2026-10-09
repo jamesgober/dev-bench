@@ -9,7 +9,7 @@
     <a href="https://crates.io/crates/dev-bench"><img alt="crates.io" src="https://img.shields.io/crates/v/dev-bench.svg"></a>
     <a href="https://crates.io/crates/dev-bench"><img alt="downloads" src="https://img.shields.io/crates/d/dev-bench.svg"></a>
     <a href="https://github.com/jamesgober/dev-bench/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/jamesgober/dev-bench/actions/workflows/ci.yml/badge.svg"></a>
-    <img alt="MSRV" src="https://img.shields.io/badge/MSRV-1.85%2B-blue.svg?style=flat-square" title="Rust Version">
+    <img alt="MSRV" src="https://img.shields.io/badge/MSRV-1.75%2B-blue.svg?style=flat-square" title="Rust Version">
     <a href="https://docs.rs/dev-bench"><img alt="docs.rs" src="https://docs.rs/dev-bench/badge.svg"></a>
 </p>
 
@@ -43,7 +43,7 @@ regression detection over time, use `dev-bench`.
 
 ```toml
 [dependencies]
-dev-bench = "0.9.4"
+dev-bench = "0.10"
 ```
 
 ```rust
@@ -128,7 +128,12 @@ if let Some(b) = store.load("main", "parse_query").unwrap() {
 }
 ```
 
-Saves are atomic (write-temp-rename); loads tolerate missing files.
+Saves are atomic (unique temp file, flushed, then renamed over the
+target); loads tolerate missing files and report a corrupt file as an
+`InvalidData` error. Each baseline lives at `<root>/<scope>/<name>.json`.
+Names that contain characters outside `[A-Za-z0-9_.-]`, or that are not
+safe as a file name on every platform (`..`, `CON`, very long names),
+get a short hash suffix so two different names never share a file.
 
 ## Producer trait
 
@@ -153,27 +158,28 @@ let report = producer.produce();   // dev_report::Report
 
 ```toml
 [dependencies]
-dev-bench = { version = "0.9", features = ["alloc-tracking"] }
+dev-bench = { version = "0.10", features = ["alloc-tracking"] }
 ```
 
 ```rust,ignore
-use mod_alloc::dhat_compat as dhat;
+// At module scope in your binary or test target. The macro names the
+// allocator through dev-bench, so no direct mod-alloc dependency is needed.
+dev_bench::install_global_allocator!();
 
-// Or use the convenience macro that expands to a
-// `#[global_allocator] static` of the same type:
-// dev_bench::install_global_allocator!();
-#[global_allocator]
-static ALLOC: dhat::Alloc = dhat::Alloc;
+use dev_bench::alloc::AllocationStats;
 
-let _profiler = dhat::Profiler::new_heap();
+let before = AllocationStats::snapshot();
 // ... run benchmarked code ...
-let stats = dev_bench::alloc::AllocationStats::snapshot();
+let stats = AllocationStats::snapshot().since(&before);
 let check = stats.compare_against_baseline("parse", baseline_alloc, 10.0);
 ```
 
-As of v0.9.7 the backend is `mod-alloc`'s `dhat_compat` surface
-(drop-in for `dhat-rs`). The JSON output written by `Profiler`'s
-drop loads in the same upstream `dh_view.html` viewer.
+The backend is `mod-alloc`'s `dhat_compat` surface (drop-in for
+`dhat-rs`). Its counters are process-wide and run from program start,
+so take a snapshot before and after the measured code and use
+`since`. A `mod_alloc::dhat_compat::Profiler` is only needed if you also
+want a DHAT JSON file; it does not reset the counters, and it must come
+from the same `mod-alloc` major version that `dev-bench` uses (`1`).
 
 The tracking allocator changes timing characteristics, so do **not**
 combine timing thresholds with allocation thresholds in the same
@@ -212,19 +218,16 @@ dimensions:
 
 ## Status
 
-`v0.9.x` is the pre-1.0 stabilization line. APIs are expected to be
-near-final; minor adjustments may still happen ahead of `1.0`. The
-statistic definitions (`mean`, `p50`, `p99`) are pinned and will not
-change.
+`v0.10.x` continues the pre-1.0 stabilization line. APIs are expected to
+be near-final; minor adjustments may still happen ahead of `1.0`. The
+statistic definitions are pinned: `mean` is the arithmetic mean, and
+`p50` / `p99` use the nearest-rank method (0.10.0 corrected the code to
+match that definition).
 
 ## Minimum supported Rust version
 
-`1.85` — pinned in `Cargo.toml` via `rust-version` and verified by
-the MSRV job in CI. The `alloc-tracking` backend's MSRV blocker
-(`dhat → addr2line` requiring 1.85+) was lifted in v0.9.7 by
-swapping to `mod-alloc` (MSRV 1.75). dev-bench's 1.85 floor is
-now held only by the `dev-report` sibling, which is tracked for
-a separate MSRV-drop milestone in that crate.
+`1.75`, pinned in `Cargo.toml` via `rust-version` and verified by the
+MSRV job in CI.
 
 ## License
 

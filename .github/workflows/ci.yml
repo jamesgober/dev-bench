@@ -22,7 +22,7 @@ jobs:
       - name: Check out sibling crates (path deps)
         run: |
           git clone --depth 1 https://github.com/jamesgober/dev-report.git ../dev-report
-          git clone --depth 1 https://github.com/jamesgober/mod-alloc.git ../mod-alloc
+          git clone --depth 1 https://github.com/jamesgober/mod-alloc.git ../../mod-collection/mod-alloc
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
@@ -50,7 +50,7 @@ jobs:
       - name: Check out sibling crates (path deps)
         run: |
           git clone --depth 1 https://github.com/jamesgober/dev-report.git ../dev-report
-          git clone --depth 1 https://github.com/jamesgober/mod-alloc.git ../mod-alloc
+          git clone --depth 1 https://github.com/jamesgober/mod-alloc.git ../../mod-collection/mod-alloc
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -80,20 +80,28 @@ jobs:
       - name: Check out sibling crates (path deps)
         run: |
           git clone --depth 1 https://github.com/jamesgober/dev-report.git ../dev-report
-          git clone --depth 1 https://github.com/jamesgober/mod-alloc.git ../mod-alloc
+          git clone --depth 1 https://github.com/jamesgober/mod-alloc.git ../../mod-collection/mod-alloc
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo doc --all-features --no-deps
 
   msrv:
-    name: MSRV (Rust 1.85)
+    name: MSRV (Rust 1.75)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - name: Check out sibling crates (path deps)
         run: |
           git clone --depth 1 https://github.com/jamesgober/dev-report.git ../dev-report
-          git clone --depth 1 https://github.com/jamesgober/mod-alloc.git ../mod-alloc
-      - uses: dtolnay/rust-toolchain@1.85
+          git clone --depth 1 https://github.com/jamesgober/mod-alloc.git ../../mod-collection/mod-alloc
+      # Without a committed Cargo.lock, cargo 1.75 would pick the newest
+      # dependency versions, some of which need a newer Rust. Resolve a
+      # lockfile that respects rust-version first, then build on 1.75.
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Resolve an MSRV-compatible lockfile
+        run: cargo generate-lockfile
+        env:
+          CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS: fallback
+      - uses: dtolnay/rust-toolchain@1.75
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --all-features --verbose

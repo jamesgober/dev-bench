@@ -41,6 +41,18 @@
 #![warn(missing_docs)]
 #![warn(rust_2018_idioms)]
 
+/// Version of this crate as compiled, taken from its `Cargo.toml`.
+///
+/// Lets tools that bundle this crate, such as the `dev` CLI in
+/// `dev-tools`, report the version that is actually linked.
+///
+/// # Example
+///
+/// ```
+/// assert!(!dev_bench::VERSION.is_empty());
+/// ```
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 use std::time::{Duration, Instant};
 
 use dev_report::{CheckResult, Evidence, Producer, Report, Severity};
@@ -54,26 +66,27 @@ pub mod alloc;
 ///
 /// Kept under the historical `__dhat` name so the macro expansion
 /// stays compatible across the v0.9.6 → v0.9.7 backend swap. The
-/// `dhat_compat::Alloc` / `Profiler` / `HeapStats` shapes mirror
-/// `dhat-rs`'s public surface field-for-field; users following
-/// dhat-rs's documentation pattern in their own code continue to
-/// work via `use mod_alloc::dhat_compat as dhat;`.
+/// macro reaches the allocator through `$crate::__dhat`, so callers do
+/// not need their own `mod-alloc` dependency.
 ///
 /// Hidden from rustdoc; consumers should use the macro, not this path.
+/// Because it is still a `pub` path, the `mod-alloc` major version is
+/// part of `dev-bench`'s public surface when `alloc-tracking` is on.
 #[cfg(feature = "alloc-tracking")]
 #[doc(hidden)]
 pub use ::mod_alloc::dhat_compat as __dhat;
 
 /// Install the allocation-tracking global allocator.
 ///
-/// Available with the `alloc-tracking` feature. Invoke at module
-/// scope in your binary or test target — the macro expands to a
+/// Available with the `alloc-tracking` feature. Invoke once, at module
+/// scope, in your binary or test target. The macro expands to a
 /// `#[global_allocator] static` declaration that consumers cannot
-/// otherwise express without depending on `mod-alloc` directly.
+/// otherwise express without depending on `mod-alloc` directly; the
+/// expansion names the type through `$crate`, so only `dev-bench` needs
+/// to be in your `Cargo.toml`.
 ///
 /// The backend is `mod-alloc`'s `dhat_compat::Alloc` (drop-in for
-/// `dhat-rs`'s `dhat::Alloc`); behaviour, API surface, and JSON
-/// output remain DHAT-viewer-compatible.
+/// `dhat-rs`'s `dhat::Alloc`).
 ///
 /// # Example
 ///
@@ -81,12 +94,13 @@ pub use ::mod_alloc::dhat_compat as __dhat;
 /// // in main.rs or a test target's top level:
 /// dev_bench::install_global_allocator!();
 ///
-/// // Optionally pull the same compat surface into your own code:
-/// use mod_alloc::dhat_compat as dhat;
+/// use dev_bench::alloc::AllocationStats;
 ///
 /// fn main() {
-///     let _profiler = dhat::Profiler::new_heap();
+///     let before = AllocationStats::snapshot();
 ///     // ... benchmarked code ...
+///     let used = AllocationStats::snapshot().since(&before);
+///     println!("{} bytes in {} allocations", used.total_bytes, used.total_blocks);
 /// }
 /// ```
 #[cfg(feature = "alloc-tracking")]
@@ -155,7 +169,10 @@ impl Benchmark {
         F: FnOnce() -> R,
     {
         let start = Instant::now();
-        let r = f();
+        // The result goes through `black_box` inside the timed region so
+        // the optimizer cannot drop the work when the caller discards
+        // the return value.
+        let r = std::hint::black_box(f());
         let elapsed = start.elapsed();
         self.samples.push(elapsed);
         self.iterations_recorded += 1;
@@ -165,8 +182,14 @@ impl Benchmark {
     /// Run a closure `n` times and record ONE sample for the entire batch.
     ///
     /// Use for sub-microsecond operations where per-iteration timing
-    /// would be dominated by `Instant::now()` overhead. The reported
-    /// per-iteration mean is `batch_duration / n`.
+    /// would be dominated by `Instant::now()` overhead.
+    ///
+    /// The recorded sample is the duration of the whole batch, so
+    /// `mean`, `p50`, `p99` and the other sample statistics describe
+    /// batches, not single iterations. [`BenchmarkResult::ops_per_sec`]
+    /// divides by [`BenchmarkResult::iterations_recorded`] and therefore
+    /// reports per-iteration throughput. The closure's return value is
+    /// not observed; wrap results in [`std::hint::black_box`] yourself.
     ///
     /// # Example
     ///
@@ -224,8 +247,10 @@ impl Benchmark {
     where
         F: FnMut(),
     {
-        let deadline = Instant::now() + budget;
-        while Instant::now() < deadline {
+        // Compare elapsed time instead of computing `now + budget`, which
+        // panics on overflow for very large budgets such as `Duration::MAX`.
+        let run_start = Instant::now();
+        while run_start.elapsed() < budget {
             let start = Instant::now();
             f();
             let elapsed = start.elapsed();
@@ -237,21 +262,13 @@ impl Benchmark {
     /// Finalize the benchmark and produce a [`BenchmarkResult`].
     pub fn finish(self) -> BenchmarkResult {
         let n = self.samples.len();
-        let mean = if n == 0 {
-            Duration::ZERO
-        } else {
-            let total: Duration = self.samples.iter().copied().sum();
-            total / n as u32
-        };
-        let mut sorted = self.samples.clone();
-        sorted.sort();
-        let p50 = sorted.get(n / 2).copied().unwrap_or(Duration::ZERO);
-        let p99 = sorted
-            .get((n as f64 * 0.99).floor() as usize)
-            .copied()
-            .unwrap_or(Duration::ZERO);
-        let cv = compute_cv(&self.samples, mean);
         let total_elapsed: Duration = self.samples.iter().copied().sum();
+        let mean = mean_of(total_elapsed, n);
+        let mut sorted = self.samples.clone();
+        sorted.sort_unstable();
+        let p50 = nearest_rank(&sorted, 0.50);
+        let p99 = nearest_rank(&sorted, 0.99);
+        let cv = compute_cv(&self.samples, mean);
         BenchmarkResult {
             name: self.name,
             samples: self.samples,
@@ -263,6 +280,52 @@ impl Benchmark {
             cv,
         }
     }
+}
+
+/// Mean of `n` samples whose sum is `total`. `Duration::ZERO` for `n == 0`.
+///
+/// Divides in `u128` nanoseconds so sample counts above `u32::MAX` are
+/// handled (`Duration / u32` would truncate the count, and divide by zero
+/// at exactly `2^32` samples).
+fn mean_of(total: Duration, n: usize) -> Duration {
+    if n == 0 {
+        return Duration::ZERO;
+    }
+    let nanos = total.as_nanos() / n as u128;
+    // The mean never exceeds the largest sample, which is a valid
+    // `Duration`, so this conversion does not lose range in practice.
+    let secs = (nanos / 1_000_000_000) as u64;
+    let sub = (nanos % 1_000_000_000) as u32;
+    Duration::new(secs, sub)
+}
+
+/// Zero-based index of the nearest-rank `q` percentile in a sorted slice of
+/// length `n > 0`: rank `ceil(q * n)`, clamped to `1..=n`.
+fn nearest_rank_index(n: usize, q: f64) -> usize {
+    debug_assert!(n > 0);
+    // NaN maps to the first sample instead of propagating.
+    let q = if q.is_nan() { 0.0 } else { q.clamp(0.0, 1.0) };
+    let exact = q * n as f64;
+    // `q * n` can land a few ULPs above an integer (0.07 * 100 is
+    // 7.000000000000001), which would push `ceil` one rank too high.
+    // Snap values that are within rounding error of an integer.
+    let rounded = exact.round();
+    let rank = if (exact - rounded).abs() <= exact.abs() * 4.0 * f64::EPSILON {
+        rounded
+    } else {
+        exact.ceil()
+    };
+    let rank = (rank as usize).clamp(1, n);
+    rank - 1
+}
+
+/// Nearest-rank percentile of an already sorted slice. `Duration::ZERO`
+/// when the slice is empty.
+fn nearest_rank(sorted: &[Duration], q: f64) -> Duration {
+    if sorted.is_empty() {
+        return Duration::ZERO;
+    }
+    sorted[nearest_rank_index(sorted.len(), q)]
 }
 
 fn compute_cv(samples: &[Duration], mean: Duration) -> f64 {
@@ -339,11 +402,17 @@ pub struct BenchmarkResult {
     pub total_elapsed: Duration,
     /// Mean sample duration.
     pub mean: Duration,
-    /// 50th percentile sample duration.
+    /// 50th percentile sample duration (nearest-rank, see
+    /// [`percentile`](BenchmarkResult::percentile)).
     pub p50: Duration,
-    /// 99th percentile sample duration.
+    /// 99th percentile sample duration (nearest-rank, see
+    /// [`percentile`](BenchmarkResult::percentile)).
     pub p99: Duration,
     /// Coefficient of variation across samples (stddev / mean).
+    ///
+    /// The standard deviation here is the population form (divides by
+    /// `n`), so it can be slightly smaller than [`stddev`](BenchmarkResult::stddev),
+    /// which divides by `n - 1`. `0.0` for an empty result or a zero mean.
     ///
     /// Higher numbers indicate noisier measurements. A CV of `0.05`
     /// means the standard deviation is 5% of the mean. Reported
@@ -405,8 +474,10 @@ impl BenchmarkResult {
 
     /// Median absolute deviation, in seconds. `0.0` for empty results.
     ///
-    /// `MAD = median(|x_i - median(x)|)`. Less affected by outliers than
-    /// standard deviation; useful for noisy measurements.
+    /// `MAD = median(|x_i - median(x)|)`, where `median(x)` is `p50` and
+    /// both medians use the same nearest-rank rule as
+    /// [`percentile`](BenchmarkResult::percentile). Less affected by
+    /// outliers than standard deviation; useful for noisy measurements.
     pub fn mad(&self) -> f64 {
         if self.samples.is_empty() {
             return 0.0;
@@ -417,9 +488,8 @@ impl BenchmarkResult {
             .iter()
             .map(|d| (d.as_secs_f64() - p50_s).abs())
             .collect();
-        deviations.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        let mid = deviations.len() / 2;
-        deviations[mid]
+        deviations.sort_by(f64::total_cmp);
+        deviations[nearest_rank_index(deviations.len(), 0.5)]
     }
 
     /// 90th percentile sample duration. `Duration::ZERO` for empty results.
@@ -437,17 +507,38 @@ impl BenchmarkResult {
 
     /// Compute an arbitrary percentile (0.0..=1.0). Returns `Duration::ZERO`
     /// for empty results. Uses nearest-rank, the same as `p50`/`p99`.
+    ///
+    /// Nearest-rank picks the sample at rank `ceil(q * n)` (1-based) in
+    /// sorted order, so the result is always one of the recorded samples.
+    /// For 100 samples, `p99` is the 99th smallest and `p50` the 50th.
+    /// `q` is clamped to `0.0..=1.0`; `q <= 0.0` and NaN give the smallest
+    /// sample, `q >= 1.0` the largest.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use dev_bench::BenchmarkResult;
+    /// use std::time::Duration;
+    ///
+    /// let samples: Vec<Duration> = (1..=100).map(Duration::from_nanos).collect();
+    /// let r = BenchmarkResult {
+    ///     name: "ranks".into(),
+    ///     samples,
+    ///     iterations_recorded: 100,
+    ///     total_elapsed: Duration::from_nanos(5050),
+    ///     mean: Duration::from_nanos(50),
+    ///     p50: Duration::from_nanos(50),
+    ///     p99: Duration::from_nanos(99),
+    ///     cv: 0.0,
+    /// };
+    /// assert_eq!(r.percentile(0.99), Duration::from_nanos(99));
+    /// assert_eq!(r.percentile(0.50), Duration::from_nanos(50));
+    /// assert_eq!(r.percentile(1.0), Duration::from_nanos(100));
+    /// ```
     pub fn percentile(&self, q: f64) -> Duration {
-        if self.samples.is_empty() {
-            return Duration::ZERO;
-        }
-        let q = q.clamp(0.0, 1.0);
         let mut sorted = self.samples.clone();
-        sorted.sort();
-        let n = sorted.len();
-        let idx = ((n as f64) * q).floor() as usize;
-        let idx = idx.min(n - 1);
-        sorted[idx]
+        sorted.sort_unstable();
+        nearest_rank(&sorted, q)
     }
 
     /// Compute a uniform-width histogram over the sample distribution.
@@ -556,6 +647,10 @@ impl BenchmarkResult {
     /// Behavior:
     /// - No baseline -> `Skip`.
     /// - Sample count below `min_samples` -> `Skip` with detail.
+    /// - Percent threshold (`RegressionPct`, `ThroughputDropPct`) with a
+    ///   non-finite percent, or a zero baseline mean while the current
+    ///   mean is non-zero -> `Skip` with detail. (Both means zero, as
+    ///   happens below the timer's resolution, is a `Pass`.)
     /// - Within threshold -> `Pass` with numeric evidence.
     /// - Over threshold but within CV noise band -> `Warn`.
     /// - Over threshold and outside CV noise band -> `Fail (Warning)`.
@@ -607,6 +702,29 @@ impl BenchmarkResult {
         let current_ns = self.mean.as_nanos();
         let baseline_ns = baseline.as_nanos();
         evidence.insert(1, Evidence::numeric("baseline_ns", baseline_ns as f64));
+
+        // A percent change from a zero baseline (a run below the timer's
+        // resolution) is undefined: any non-zero mean would count as an
+        // infinite regression, and a zero throughput floor never trips. Two
+        // zero means are simply equal and fall through to `Pass`. A NaN or
+        // infinite percent would silently pass every run. Report the
+        // undefined cases as `Skip` so they are visible instead of giving
+        // a verdict.
+        if let Threshold::RegressionPct(pct) | Threshold::ThroughputDropPct(pct) = opts.threshold {
+            let reason = if !pct.is_finite() {
+                Some(format!("threshold percent is not a finite number ({pct})"))
+            } else if baseline.is_zero() && current_ns != 0 {
+                Some("baseline mean is zero; a percent threshold cannot be applied".to_string())
+            } else {
+                None
+            };
+            if let Some(reason) = reason {
+                let mut c = CheckResult::skip(name).with_detail(reason);
+                c.tags = tags;
+                c.evidence = evidence;
+                return c;
+            }
+        }
 
         let regressed = match opts.threshold {
             Threshold::RegressionPct(pct) => {
@@ -1141,6 +1259,179 @@ mod tests {
         assert_eq!(report.checks.len(), 1);
         assert_eq!(report.producer.as_deref(), Some("dev-bench"));
         assert_eq!(report.overall_verdict(), Verdict::Pass);
+    }
+
+    fn bench_with_nanos(nanos: &[u64]) -> Benchmark {
+        Benchmark {
+            name: "fixed".into(),
+            samples: nanos.iter().copied().map(Duration::from_nanos).collect(),
+            iterations_recorded: nanos.len() as u64,
+        }
+    }
+
+    #[test]
+    fn finish_uses_nearest_rank_percentiles() {
+        // 1..=100 ns in shuffled order. Nearest-rank p50 is the 50th
+        // smallest and p99 the 99th smallest. The old `floor(n * q)`
+        // index returned 51 and 100.
+        let mut nanos: Vec<u64> = (1..=100).collect();
+        nanos.reverse();
+        let r = bench_with_nanos(&nanos).finish();
+        assert_eq!(r.p50, Duration::from_nanos(50));
+        assert_eq!(r.p99, Duration::from_nanos(99));
+        assert_eq!(r.p90(), Duration::from_nanos(90));
+        assert_eq!(r.p999(), Duration::from_nanos(100));
+        assert_eq!(r.percentile(0.0), Duration::from_nanos(1));
+        assert_eq!(r.percentile(f64::NAN), Duration::from_nanos(1));
+        assert_eq!(r.percentile(1.0), Duration::from_nanos(100));
+        // 0.07 * 100 is 7.000000000000001 in f64; rank must still be 7.
+        assert_eq!(r.percentile(0.07), Duration::from_nanos(7));
+        assert_eq!(r.mean, Duration::from_nanos(50)); // 5050 / 100, truncated
+        assert_eq!(r.total_elapsed, Duration::from_nanos(5050));
+    }
+
+    #[test]
+    fn single_sample_stats_equal_that_sample() {
+        let r = bench_with_nanos(&[700]).finish();
+        let s = Duration::from_nanos(700);
+        assert_eq!(r.mean, s);
+        assert_eq!(r.p50, s);
+        assert_eq!(r.p99, s);
+        assert_eq!(r.p90(), s);
+        assert_eq!(r.min(), s);
+        assert_eq!(r.max(), s);
+        assert_eq!(r.cv, 0.0);
+        assert_eq!(r.stddev(), 0.0);
+        assert_eq!(r.mad(), 0.0);
+        assert_eq!(r.histogram(4).len(), 1);
+    }
+
+    #[test]
+    fn two_samples_median_is_lower_sample() {
+        let r = bench_with_nanos(&[300, 100]).finish();
+        assert_eq!(r.p50, Duration::from_nanos(100));
+        assert_eq!(r.p99, Duration::from_nanos(300));
+        assert_eq!(r.mean, Duration::from_nanos(200));
+    }
+
+    #[test]
+    fn empty_finish_is_all_zero() {
+        let r = bench_with_nanos(&[]).finish();
+        assert_eq!(r.mean, Duration::ZERO);
+        assert_eq!(r.p50, Duration::ZERO);
+        assert_eq!(r.p99, Duration::ZERO);
+        assert_eq!(r.cv, 0.0);
+        assert_eq!(r.ops_per_sec(), 0.0);
+    }
+
+    #[test]
+    fn mad_matches_hand_computed_value() {
+        // Sorted: 10 20 30 40 1000. Median 30. Deviations: 20 10 0 10 970
+        // -> sorted 0 10 10 20 970 -> median 10 ns.
+        let r = bench_with_nanos(&[1000, 10, 40, 20, 30]).finish();
+        assert_eq!(r.p50, Duration::from_nanos(30));
+        assert!((r.mad() - 10e-9).abs() < 1e-15);
+    }
+
+    #[test]
+    fn cv_and_stddev_hand_computed() {
+        // Samples 100 and 300: mean 200, population sd 100, sample sd ~141.42.
+        let r = bench_with_nanos(&[100, 300]).finish();
+        assert!((r.cv - 0.5).abs() < 1e-12);
+        assert!((r.stddev() - 141.421_356_237e-9).abs() < 1e-15);
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn mean_handles_more_than_u32_max_samples() {
+        // `Duration / u32` truncated the count; exactly 2^32 samples
+        // became a division by zero.
+        let n = 1usize << 32;
+        let total = Duration::from_nanos(10 * (1u64 << 32));
+        assert_eq!(mean_of(total, n), Duration::from_nanos(10));
+        assert_eq!(mean_of(Duration::from_secs(3), 0), Duration::ZERO);
+        assert_eq!(
+            mean_of(Duration::new(5, 500_000_000), 2),
+            Duration::new(2, 750_000_000)
+        );
+    }
+
+    #[test]
+    fn run_for_with_huge_budget_does_not_overflow() {
+        // `Instant::now() + Duration::MAX` used to panic before the first
+        // iteration. The closure panics on its third call to end the run.
+        let mut calls = 0u32;
+        let mut b = Benchmark::new("huge");
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            b.run_for(Duration::MAX, || {
+                calls += 1;
+                if calls == 3 {
+                    panic!("stop");
+                }
+            });
+        }));
+        assert!(outcome.is_err());
+        assert_eq!(calls, 3);
+    }
+
+    #[test]
+    fn zero_baseline_with_percent_threshold_skips() {
+        let r = bench_with_nanos(&[100, 100]).finish();
+        for t in [
+            Threshold::regression_pct(10.0),
+            Threshold::throughput_drop_pct(10.0),
+        ] {
+            let v = r.compare_against_baseline(Some(Duration::ZERO), t);
+            assert_eq!(v.verdict, Verdict::Skip, "{t:?}");
+            assert!(v
+                .detail
+                .as_deref()
+                .unwrap()
+                .contains("baseline mean is zero"));
+            assert!(v.evidence.iter().any(|e| e.label == "baseline_ns"));
+        }
+        // An absolute threshold still works against a zero baseline.
+        let v = r.compare_against_baseline(Some(Duration::ZERO), Threshold::regression_abs_ns(50));
+        assert_eq!(v.verdict, Verdict::Fail);
+        // Zero against zero (both below timer resolution) is equal: Pass.
+        let zero = bench_with_nanos(&[0, 0, 0]).finish();
+        for t in [
+            Threshold::regression_pct(10.0),
+            Threshold::throughput_drop_pct(10.0),
+        ] {
+            let v = zero.compare_against_baseline(Some(Duration::ZERO), t);
+            assert_eq!(v.verdict, Verdict::Pass, "{t:?}");
+        }
+    }
+
+    #[test]
+    fn non_finite_percent_threshold_skips() {
+        let r = bench_with_nanos(&[500, 500]).finish();
+        for pct in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let v = r.compare_against_baseline(
+                Some(Duration::from_nanos(100)),
+                Threshold::regression_pct(pct),
+            );
+            assert_eq!(v.verdict, Verdict::Skip, "pct={pct}");
+            assert!(v.detail.as_deref().unwrap().contains("not a finite number"));
+        }
+    }
+
+    #[test]
+    fn regression_pct_boundary_is_inclusive_pass() {
+        // Exactly +10% over a 100 ns baseline passes; one more ns fails.
+        let at = bench_with_nanos(&[110]).finish();
+        let over = bench_with_nanos(&[111]).finish();
+        let opts = |r: &BenchmarkResult| {
+            r.compare_with_options(&CompareOptions {
+                baseline_mean: Some(Duration::from_nanos(100)),
+                threshold: Threshold::regression_pct(10.0),
+                min_samples: 1,
+                allow_cv_noise_band: false,
+            })
+        };
+        assert_eq!(opts(&at).verdict, Verdict::Pass);
+        assert_eq!(opts(&over).verdict, Verdict::Fail);
     }
 
     #[test]

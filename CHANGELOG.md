@@ -7,18 +7,89 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.9.8] - 2026-05-18
+## [0.10.0] - 2026-10-09
+
+`mod-alloc` 1.0, MSRV 1.75, and statistics and baseline-store fixes
+from a review pass. This replaces the unreleased 0.9.8: the `mod-alloc`
+bump is a breaking change for one documented setup (see below), so it
+ships as 0.10.0 instead of a patch.
+
+### Breaking
+
+- **`mod-alloc` dependency bumped from `^0.9` to `^1`.** 0.9.7's README
+  told `alloc-tracking` users to add `mod-alloc` themselves and use
+  `mod_alloc::dhat_compat::Profiler` directly. With dev-bench on
+  `mod-alloc` 1.x, a project that still depends on `mod-alloc` 0.9 ends
+  up with two copies: the allocator installed by
+  `install_global_allocator!()` comes from 1.x while its `Profiler`
+  comes from 0.9, and the profile is silently empty. Bump your own
+  `mod-alloc` dependency to `1`, or drop it and use dev-bench's API.
+  The macro itself needs no direct `mod-alloc` dependency.
+- **p50 / p99 values change for some sample counts** (see Fixed). The
+  statistic definitions were documented as pinned; the code now matches
+  them, so the numbers move.
+
+### Added
+
+- `AllocationStats::since(&earlier)` to measure the allocations of one
+  region. `mod-alloc`'s counters run from process start and a
+  `Profiler` does not reset them.
+- `VERSION` constant with the crate version as compiled, so tools that
+  bundle this crate can report what is actually linked.
+
+### Fixed
+
+- p50, p99, `percentile` and `mad` now use nearest-rank as documented.
+  The code used `floor(n * q)`, one rank high for even sample counts
+  (p50) and whenever `n * 0.99` was a whole number (p99). NaN `q` gives
+  the smallest sample, and float error such as `0.07 * 100` no longer
+  bumps the rank.
+- The mean truncated the sample count above `u32::MAX` and divided by
+  zero at exactly 2^32 samples; it now divides in u128 nanoseconds.
+- `run_for(Duration::MAX)` panicked on `Instant` overflow.
+- `iter` now passes the closure's result through `black_box` inside the
+  timed region, so the optimizer cannot drop the measured work. No
+  measurable overhead.
+- Percent thresholds: a NaN or infinite percent passed every run, and a
+  zero baseline mean gave an infinite-percent Fail (or could never trip
+  `ThroughputDropPct`). Both now give Skip. Zero against zero still
+  passes.
+- Baseline store:
+  - A scope of `..` escaped the store root.
+  - Names that sanitize to the same file name (`a/b` and `a_b`, or two
+    non-ASCII names) overwrote each other, and Windows device names
+    (`con`, `nul.txt`) or names over 255 bytes failed to save. Such
+    names now get a stable hash suffix. Files written by earlier
+    versions are still read, as long as the name stored inside matches.
+  - Saves used one fixed temp file name, so concurrent saves collided.
+    Each save now writes a unique temp file, syncs it, renames it into
+    place (retrying on Windows when another save replaces the same file
+    at that moment) and removes it on error.
+  - A NaN or infinite `ops_per_sec` was written as `null`, leaving a
+    file that could never be loaded. `save` now rejects it.
+- A non-finite allocation `pct_threshold` gives Skip instead of passing.
 
 ### Changed
 
-- **`mod-alloc` dep bumped from `^0.9` to `^1`.** `mod-alloc 1.0.0` is the stable release of the `dhat_compat` backend that v0.9.7 swapped to. The shape and behavior of `dev-bench`'s `alloc-tracking` feature are unchanged; this bump just tracks the upstream's pre-1.0 → 1.0 promotion. Cargo.toml: `mod-alloc = { version = "1", path = "../mod-alloc", features = ["dhat-compat"], optional = true }`.
+- **MSRV lowered from `1.85` to `1.75`.** `mod-alloc` 1.0 is MSRV 1.75
+  and dev-report 0.9.7 dropped to 1.75, so nothing holds dev-bench at
+  1.85. CI's MSRV job now builds on 1.75 against an MSRV-compatible
+  lockfile.
+- The local `mod-alloc` path dependency now points at
+  `../../mod-collection/mod-alloc`, where that crate actually lives,
+  and CI clones it there. Published builds use crates.io as before.
 
-### Notes
+### Documentation
 
-- No code changes in `dev-bench` itself; only the version constraint on the optional `mod-alloc` dep.
-- MSRV held at `1.85` for now. `mod-alloc 1.0` and `dev-bench` source both compile cleanly on Rust 1.75 (verified), but the coordinated suite-wide MSRV rollback is gated on `dev-fixtures` clearing its `tempfile → getrandom 0.4.2 → edition2024` dependency chain, which requires the in-progress `mod-tempdir` swap to land first.
+- `iter_with_count` said the reported mean was per iteration; it is per
+  batch.
+- `cv` is documented as using the population standard deviation.
+- The allocation counters are documented as process-wide.
+- The `install_global_allocator!()` and README allocation examples no
+  longer require a direct `mod-alloc` dependency.
+- README: version snippets, Status section and MSRV section updated.
 
-[0.9.8]: https://github.com/jamesgober/dev-bench/releases/tag/v0.9.8
+[0.10.0]: https://github.com/jamesgober/dev-bench/releases/tag/v0.10.0
 
 ## [0.9.7] - 2026-05-18
 
