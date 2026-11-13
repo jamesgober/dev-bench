@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-11-12
+
+Real regressions are no longer written off as noise. 0.10.1 was tagged
+but never published to crates.io, so its change (below) ships here
+too.
+
+### Fixed
+
+- The noise band that turns a regression into `Warn` was
+  `baseline * cv`, where `cv` is the spread of single samples. Adding
+  samples never narrowed it, and short operations often have a `cv`
+  above 1, so large regressions came out as `Warn`. The band is now two
+  standard errors of the mean, `baseline * 2 * cv / sqrt(samples)`. For
+  example, a +43% regression over 10,000 samples at `cv = 0.5` used to
+  be within the band; it now fails.
+
+### Changed
+
+- `mod-alloc` and `dev-report` come from crates.io (`mod-alloc` 1.1,
+  `dev-report` 0.9.9) instead of sibling checkouts, so a fresh clone
+  builds and CI tests against the released versions.
+
+[0.10.2]: https://github.com/jamesgober/dev-bench/releases/tag/v0.10.2
+
 ## [0.10.1] - 2026-10-09
 
 Cheaper allocation tracking.

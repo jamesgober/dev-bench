@@ -759,9 +759,13 @@ impl BenchmarkResult {
             return c;
         }
 
-        // Regression detected. Decide Fail vs Warn based on CV noise band.
+        // Regression detected. Decide Fail vs Warn based on the noise
+        // band: two standard errors of the mean. `cv` is the spread of
+        // single samples; the mean of `n` samples varies by `cv / sqrt(n)`,
+        // so the band narrows as samples are added.
         let in_noise_band = opts.allow_cv_noise_band && {
-            let allowed_noise_ns = baseline_ns as f64 * self.cv;
+            let allowed_noise_ns =
+                baseline_ns as f64 * noise_band_fraction(self.cv, self.samples.len());
             let delta_ns = (current_ns as f64) - (baseline_ns as f64);
             delta_ns <= allowed_noise_ns
         };
@@ -913,8 +917,9 @@ pub struct CompareOptions {
     /// Minimum sample count required before a comparison can be made.
     /// Below this, the verdict is `Skip` with a `min_samples` detail.
     pub min_samples: u64,
-    /// If `true`, regressions within `baseline_ns * cv` are downgraded
-    /// from `Fail` to `Warn`.
+    /// If `true`, regressions within the noise band are downgraded from
+    /// `Fail` to `Warn`. The band is two standard errors of the mean:
+    /// `baseline_ns * 2 * cv / sqrt(samples)`.
     pub allow_cv_noise_band: bool,
 }
 
@@ -927,6 +932,16 @@ impl Default for CompareOptions {
             allow_cv_noise_band: true,
         }
     }
+}
+
+/// Width of the noise band as a fraction of the baseline: two standard
+/// errors of the mean, `2 * cv / sqrt(n)`. Zero when there are no
+/// samples or `cv` is not a finite, non-negative number.
+fn noise_band_fraction(cv: f64, n: usize) -> f64 {
+    if n == 0 || !cv.is_finite() || cv <= 0.0 {
+        return 0.0;
+    }
+    2.0 * cv / (n as f64).sqrt()
 }
 
 /// A trait for any object that can run a benchmark and produce a result.
@@ -1096,11 +1111,12 @@ mod tests {
     #[test]
     fn regression_inside_cv_band_warns() {
         let mut b = Benchmark::new("x");
-        for _ in 0..50 {
+        for _ in 0..4 {
             b.iter(|| std::hint::black_box(1 + 1));
         }
         let mut r = b.finish();
-        // Current is 12% over baseline but cv is 30% -> within noise band.
+        // Current is 12% over baseline; 4 samples with cv 30% give a
+        // band of 2 * 0.30 / 2 = 30% -> within noise band.
         r.mean = Duration::from_nanos(112);
         r.cv = 0.30;
         let opts = CompareOptions {
@@ -1113,6 +1129,35 @@ mod tests {
         assert_eq!(v.verdict, Verdict::Warn);
         assert!(v.has_tag("regression"));
         assert!(v.detail.unwrap().contains("CV noise band"));
+    }
+
+    #[test]
+    fn large_regression_with_many_samples_fails_despite_high_cv() {
+        let mut b = Benchmark::new("x");
+        for _ in 0..10_000 {
+            b.iter(|| std::hint::black_box(1 + 1));
+        }
+        let mut r = b.finish();
+        // +43% at cv 0.5 over 10k samples is far outside 2 standard
+        // errors (1%); the old per-sample band (50%) called it noise.
+        r.mean = Duration::from_nanos(200);
+        r.cv = 0.5;
+        let opts = CompareOptions {
+            baseline_mean: Some(Duration::from_nanos(140)),
+            threshold: Threshold::regression_pct(10.0),
+            min_samples: 1,
+            allow_cv_noise_band: true,
+        };
+        let v = r.compare_with_options(&opts);
+        assert_eq!(v.verdict, Verdict::Fail, "{:?}", v.detail);
+    }
+
+    #[test]
+    fn noise_band_fraction_handles_edges() {
+        assert_eq!(noise_band_fraction(0.5, 0), 0.0);
+        assert_eq!(noise_band_fraction(f64::NAN, 10), 0.0);
+        assert_eq!(noise_band_fraction(-1.0, 10), 0.0);
+        assert!((noise_band_fraction(0.5, 100) - 0.1).abs() < 1e-12);
     }
 
     #[test]
