@@ -71,7 +71,10 @@ free-form detail strings.
 
 Noisy machines produce false regressions. `dev-bench` computes the
 coefficient of variation alongside the mean and downgrades regressions
-within the noise band from `Fail` to `Warn`:
+within the noise band from `Fail` to `Warn`. The band is two standard
+errors of the mean, `baseline * 2 * cv / sqrt(samples)`, so it narrows
+as you take more samples and a real regression is not written off as
+noise just because single iterations vary a lot:
 
 ```rust
 use dev_bench::{Benchmark, CompareOptions, Threshold};
